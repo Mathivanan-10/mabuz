@@ -1,0 +1,1383 @@
+[
+  {
+    "id": "tab_dashboard",
+    "type": "tab",
+    "label": "NeuroFlow HMI",
+    "disabled": false,
+    "info": "NeuroFlow HMI - Operator Dashboard with Digital Twin, Automation Templates, and AI Agent simulation"
+  },
+  {
+    "id": "ui_group_status",
+    "type": "ui_group",
+    "name": "Robot Status",
+    "tab": "ui_tab_dashboard",
+    "order": 1,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_controls",
+    "type": "ui_group",
+    "name": "Quick Controls",
+    "tab": "ui_tab_dashboard",
+    "order": 2,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_motion",
+    "type": "ui_group",
+    "name": "Motion Control",
+    "tab": "ui_tab_dashboard",
+    "order": 3,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_twin",
+    "type": "ui_group",
+    "name": "Digital Twin",
+    "tab": "ui_tab_dashboard",
+    "order": 4,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_templates",
+    "type": "ui_group",
+    "name": "Automation Templates",
+    "tab": "ui_tab_templates",
+    "order": 1,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_alerts",
+    "type": "ui_group",
+    "name": "Alerts",
+    "tab": "ui_tab_dashboard",
+    "order": 5,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_flow",
+    "type": "ui_group",
+    "name": "Flow Builder Log",
+    "tab": "ui_tab_flow",
+    "order": 1,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_group_ai",
+    "type": "ui_group",
+    "name": "AI Agent",
+    "tab": "ui_tab_flow",
+    "order": 2,
+    "disp": true,
+    "width": 12
+  },
+  {
+    "id": "ui_tab_dashboard",
+    "type": "ui_tab",
+    "name": "Dashboard",
+    "icon": "dashboard",
+    "order": 1
+  },
+  {
+    "id": "ui_tab_templates",
+    "type": "ui_tab",
+    "name": "Automation",
+    "icon": "settings",
+    "order": 2
+  },
+  {
+    "id": "ui_tab_flow",
+    "type": "ui_tab",
+    "name": "Flow / AI",
+    "icon": "memory",
+    "order": 3
+  },
+  {
+    "id": "sensor_tick",
+    "type": "inject",
+    "z": "tab_dashboard",
+    "name": "Sensor Tick (1.5s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "1.5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.5,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 60,
+    "wires": [
+      [
+        "sensor_sim"
+      ]
+    ]
+  },
+  {
+    "id": "sensor_sim",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Sensor Simulator",
+    "func": "// \u2500\u2500 Sensor Simulator \u2500\u2500\n// Initialise persistent state on first run\nlet s = context.global.get(\"robot_state\");\nif (!s) {\n    s = {\n        vib: 22, temp: 36.2,\n        battery: 98, speed: 100, speedLimit: 100,\n        robotX: 140, robotY: 95, robotAngle: 0,\n        robState: 'running',\n        payload: false, riskScore: 0, predAlert: false,\n        vibHistory: [], tempHistory: [],\n        pathHist: [],\n        isPatrolling: false, isDocking: false,\n        isSpinning: false, waypointSet: false,\n        patrolIndex: 0,\n        zone: 'A',\n        activeTemplates: [],\n        manualDir: null,\n        modes: ['smart']\n    };\n    context.global.set(\"robot_state\", s);\n}\n\n\n// Sensor drift\ns.vib  = Math.min(100, Math.max(0, s.vib  + (Math.random() - 0.5) * 5));\ns.temp = Math.min(80,  Math.max(20, s.temp + (Math.random() - 0.5) * 1.2));\n\nif (s.robState === 'running') {\n    s.battery = Math.max(0, s.battery - Math.random() * 0.18);\n}\n\nif (Math.random() < 0.025) s.payload = !s.payload;\n\ns.vibHistory.push(s.vib);\ns.tempHistory.push(s.temp);\nif (s.vibHistory.length > 120) s.vibHistory.shift();\nif (s.tempHistory.length > 120) s.tempHistory.shift();\n\ns.riskScore = Math.min(100, s.vib * 0.6 + Math.max(0, s.temp - 40) * 1.5);\n\n// Predictive alert\nif (s.vib > 65 && !s.predAlert) {\n    s.predAlert = true;\n} else if (s.vib < 48) {\n    s.predAlert = false;\n}\n\n// Zone calculation\nconst ZONES = [\n    { id:'A', x1:0,   y1:0,   x2:160, y2:100 },\n    { id:'B', x1:160, y1:0,   x2:300, y2:100 },\n    { id:'C', x1:0,   y1:100, x2:100, y2:200 },\n    { id:'D', x1:100, y1:100, x2:300, y2:200 }\n];\nconst DOCK_X = 50, DOCK_Y = 150;\nconst PATROL_WP = [\n    {x:80,y:50},{x:220,y:50},{x:250,y:150},{x:150,y:170},{x:50,y:150},{x:80,y:50}\n];\n\nfunction getZone(x, y) {\n    for (const z of ZONES) if (x>=z.x1&&x<z.x2&&y>=z.y1&&y<z.y2) return z.id;\n    return 'A';\n}\nfunction moveTowards(tx, ty, spd) {\n    const dx = tx - s.robotX, dy = ty - s.robotY;\n    const dist = Math.sqrt(dx*dx + dy*dy);\n    if (dist < 4) return true;\n    const sp = Math.min(spd, dist);\n    s.robotAngle = Math.atan2(dy, dx);\n    s.robotX += dx/dist*sp;\n    s.robotY += dy/dist*sp;\n    s.pathHist.push({x:s.robotX,y:s.robotY});\n    if (s.pathHist.length > 35) s.pathHist.shift();\n    return false;\n}\n\n// Template effects\nif (s.activeTemplates.includes('heat') && s.temp > 55 && s.speed > 60) {\n    s.speed = 60;\n}\nif (s.activeTemplates.includes('batt') && s.battery < 20 && s.robState === 'running' && !s.isDocking) {\n    s.isDocking = true;\n}\nif (s.activeTemplates.includes('vib') && s.vib > 70 && s.speed > 50) {\n    s.speed = 50;\n}\nif (s.activeTemplates.includes('nav') && Math.random() < 0.05) {\n    s.robotAngle += (Math.random() - 0.5) * 0.3;\n}\n\n// Movement logic\nif (s.robState === 'running') {\n    if (s.manualDir) {\n        const step = (s.speedLimit/100) * 4;\n        const dirs = {forward:[0,-step],backward:[0,step],left:[-step,0],right:[step,0]};\n        const [dx,dy] = dirs[s.manualDir] || [0,0];\n        s.robotX = Math.min(295, Math.max(5, s.robotX + dx));\n        s.robotY = Math.min(195, Math.max(5, s.robotY + dy));\n        if (dx!==0||dy!==0) s.robotAngle = Math.atan2(dy, dx);\n        s.pathHist.push({x:s.robotX,y:s.robotY});\n        if (s.pathHist.length > 35) s.pathHist.shift();\n    } else if (s.isDocking) {\n        const arrived = moveTowards(DOCK_X, DOCK_Y, (s.speedLimit/100)*3);\n        if (arrived) {\n            s.isDocking = false;\n            s.robState = 'idle';\n        }\n    } else if (s.waypointSet) {\n        const arrived = moveTowards(s.waypointX, s.waypointY, (s.speedLimit/100)*3.5);\n        if (arrived) s.waypointSet = false;\n    } else if (s.isPatrolling) {\n        const wp = PATROL_WP[s.patrolIndex % PATROL_WP.length];\n        const arrived = moveTowards(wp.x, wp.y, (s.speedLimit/100)*3);\n        if (arrived) s.patrolIndex++;\n    } else if (s.isSpinning) {\n        s.robotAngle += 0.12;\n        s.spinTick = (s.spinTick||0) + 1;\n        if (s.spinTick >= 53) { s.isSpinning = false; s.spinTick = 0; }\n    } else {\n        const spd = s.speedLimit/100;\n        const dx = (Math.random()-0.5)*5*spd;\n        const dy = (Math.random()-0.5)*5*spd;\n        s.robotX = Math.min(295, Math.max(5, s.robotX+dx));\n        s.robotY = Math.min(195, Math.max(5, s.robotY+dy));\n        s.robotAngle = Math.atan2(dy, dx);\n        s.pathHist.push({x:s.robotX,y:s.robotY});\n        if (s.pathHist.length > 35) s.pathHist.shift();\n    }\n    s.speed = Math.min(s.speedLimit, s.speed);\n    if (s.speed < s.speedLimit && !s.activeTemplates.includes('heat') && !s.activeTemplates.includes('vib')) {\n        s.speed = Math.min(s.speedLimit, s.speed + 1);\n    }\n}\n\n// Zone charging\ns.zone = getZone(s.robotX, s.robotY);\nif (s.zone === 'C' && s.robState === 'idle') {\n    s.battery = Math.min(100, s.battery + 0.3);\n}\n\n// Build output\nconst payload = {\n    vib:      +s.vib.toFixed(2),\n    temp:     +s.temp.toFixed(2),\n    battery:  +s.battery.toFixed(1),\n    speed:    s.speed,\n    zone:     s.zone,\n    state:    s.robState,\n    riskScore: +s.riskScore.toFixed(1),\n    predAlert: s.predAlert,\n    payload:  s.payload,\n    robotX:   +s.robotX.toFixed(1),\n    robotY:   +s.robotY.toFixed(1),\n    robotAngle: +s.robotAngle.toFixed(3),\n    isPatrolling: s.isPatrolling,\n    isDocking:    s.isDocking,\n    isSpinning:   s.isSpinning,\n    activeTemplates: s.activeTemplates,\n    pathHist: s.pathHist.slice(-10),\n    vibHistory: s.vibHistory.slice(-40),\n    tempHistory: s.tempHistory.slice(-40)\n};\ncontext.global.set(\"robot_state\", s);\nmsg.payload = payload;\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 340,
+    "y": 60,
+    "wires": [
+      [
+        "split_outputs"
+      ]
+    ]
+  },
+  {
+    "id": "split_outputs",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Route to Outputs",
+    "func": "const d = msg.payload;\n\n// Build 8 messages for separate outputs\nconst battMsg = {payload: d.battery};\nconst tempMsg = {payload: d.temp};\nconst vibMsg  = {payload: d.vib};\nconst speedMsg = {payload: d.speed};\nconst riskMsg  = {payload: d.riskScore};\nconst stateMsg = {payload: d.state + ' | Zone ' + d.zone};\nconst alertMsg = {payload: d};\nconst chartMsg = {payload: d};\n\nreturn [battMsg, tempMsg, vibMsg, speedMsg, riskMsg, stateMsg, alertMsg, chartMsg];\n",
+    "outputs": 8,
+    "noerr": 0,
+    "x": 570,
+    "y": 60,
+    "wires": [
+      [
+        "ui_battery_gauge"
+      ],
+      [
+        "ui_temp_gauge"
+      ],
+      [
+        "ui_vib_gauge"
+      ],
+      [
+        "ui_speed_gauge"
+      ],
+      [
+        "ui_risk_gauge"
+      ],
+      [
+        "ui_state_text"
+      ],
+      [
+        "alert_engine"
+      ],
+      [
+        "twin_chart"
+      ]
+    ]
+  },
+  {
+    "id": "ui_battery_gauge",
+    "type": "ui_gauge",
+    "z": "tab_dashboard",
+    "name": "Battery",
+    "group": "ui_group_status",
+    "order": 1,
+    "width": 3,
+    "height": 3,
+    "gtype": "gage",
+    "title": "\ud83d\udd0b Battery",
+    "label": "%",
+    "format": "{{value}}%",
+    "min": 0,
+    "max": 100,
+    "colors": [
+      "#ff4545",
+      "#ffb020",
+      "#00d97e"
+    ],
+    "seg1": 20,
+    "seg2": 40,
+    "className": "",
+    "x": 820,
+    "y": 20,
+    "wires": []
+  },
+  {
+    "id": "ui_temp_gauge",
+    "type": "ui_gauge",
+    "z": "tab_dashboard",
+    "name": "Temperature",
+    "group": "ui_group_status",
+    "order": 2,
+    "width": 3,
+    "height": 3,
+    "gtype": "gage",
+    "title": "\ud83c\udf21\ufe0f Temperature",
+    "label": "\u00b0C",
+    "format": "{{value}}\u00b0C",
+    "min": 20,
+    "max": 80,
+    "colors": [
+      "#00d97e",
+      "#ffb020",
+      "#ff4545"
+    ],
+    "seg1": 45,
+    "seg2": 58,
+    "className": "",
+    "x": 820,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "ui_vib_gauge",
+    "type": "ui_gauge",
+    "z": "tab_dashboard",
+    "name": "Vibration",
+    "group": "ui_group_status",
+    "order": 3,
+    "width": 3,
+    "height": 3,
+    "gtype": "gage",
+    "title": "\ud83d\udcf3 Vibration",
+    "label": "%",
+    "format": "{{value}}%",
+    "min": 0,
+    "max": 100,
+    "colors": [
+      "#00d97e",
+      "#ffb020",
+      "#ff4545"
+    ],
+    "seg1": 40,
+    "seg2": 70,
+    "className": "",
+    "x": 820,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "ui_speed_gauge",
+    "type": "ui_gauge",
+    "z": "tab_dashboard",
+    "name": "Speed",
+    "group": "ui_group_status",
+    "order": 4,
+    "width": 3,
+    "height": 3,
+    "gtype": "gage",
+    "title": "\u26a1 Speed",
+    "label": "%",
+    "format": "{{value}}%",
+    "min": 0,
+    "max": 100,
+    "colors": [
+      "#ff4545",
+      "#ffb020",
+      "#4f8ef7"
+    ],
+    "seg1": 30,
+    "seg2": 60,
+    "className": "",
+    "x": 820,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "ui_risk_gauge",
+    "type": "ui_gauge",
+    "z": "tab_dashboard",
+    "name": "Risk Score",
+    "group": "ui_group_twin",
+    "order": 5,
+    "width": 4,
+    "height": 3,
+    "gtype": "donut",
+    "title": "\u26a0\ufe0f Risk Score",
+    "label": "%",
+    "format": "{{value}}%",
+    "min": 0,
+    "max": 100,
+    "colors": [
+      "#00d97e",
+      "#ffb020",
+      "#ff4545"
+    ],
+    "seg1": 40,
+    "seg2": 70,
+    "className": "",
+    "x": 820,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "ui_state_text",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_status",
+    "order": 5,
+    "width": 6,
+    "height": 1,
+    "name": "Robot State",
+    "label": "\ud83e\udd16 State / Zone",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "x": 820,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "twin_chart",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Format Sparkline Chart",
+    "func": "const d = msg.payload;\nconst series = ['Vibration','Temperature'];\nconst vib = d.vibHistory || [];\nconst tmp = (d.tempHistory || []).map(v => +(v/80*100).toFixed(1));\nconst len = Math.max(vib.length, tmp.length);\n\nmsg.payload = [\n  { series: ['Vibration %'], data: [vib.map((v,i)=>({x:i,y:+v.toFixed(1)}))], labels: [''] },\n  { series: ['Temp (scaled)'], data: [tmp.map((v,i)=>({x:i,y:v}))], labels: [''] }\n];\nreturn msg;\n",
+    "outputs": 1,
+    "x": 820,
+    "y": 260,
+    "wires": [
+      [
+        "ui_sparkline"
+      ]
+    ]
+  },
+  {
+    "id": "ui_sparkline",
+    "type": "ui_chart",
+    "z": "tab_dashboard",
+    "name": "Sensor Trend",
+    "group": "ui_group_twin",
+    "order": 1,
+    "width": 8,
+    "height": 4,
+    "label": "Vibration & Temperature Trend",
+    "chartType": "line",
+    "legend": "true",
+    "xformat": "HH:mm:ss",
+    "interpolate": "linear",
+    "nodata": "",
+    "dot": false,
+    "ymin": "0",
+    "ymax": "100",
+    "removeOlder": 1,
+    "removeOlderPoints": "50",
+    "removeOlderUnit": "3600",
+    "cutout": 0,
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#ffb020",
+      "#4f8ef7",
+      "#00d97e",
+      "#ff4545"
+    ],
+    "outputs": 1,
+    "className": "",
+    "x": 1060,
+    "y": 260,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "alert_engine",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Alert Engine",
+    "func": "const d = msg.payload;\nconst alerts = [];\nconst ts = new Date().toLocaleTimeString();\n\nif (d.temp > 58) alerts.push({ level:'CRITICAL', icon:'\ud83d\udd25', title:'Critical Temperature', detail:`Motor temp ${d.temp.toFixed(1)}\u00b0C \u2014 shutdown risk`, ts });\nelse if (d.temp > 45) alerts.push({ level:'WARNING', icon:'\ud83c\udf21\ufe0f', title:'High Temperature', detail:`Motor temp ${d.temp.toFixed(1)}\u00b0C \u2014 monitor closely`, ts });\n\nif (d.vib > 70) alerts.push({ level:'CRITICAL', icon:'\ud83d\udcf3', title:'Critical Vibration', detail:`Vibration ${d.vib.toFixed(1)}% \u2014 reduce speed`, ts });\nelse if (d.vib > 40) alerts.push({ level:'WARNING', icon:'\u26a1', title:'Elevated Vibration', detail:`Vibration ${d.vib.toFixed(1)}% \u2014 above normal`, ts });\n\nif (d.battery < 20) alerts.push({ level:'CRITICAL', icon:'\ud83d\udd0b', title:'Critical Battery', detail:`Battery ${d.battery.toFixed(0)}% \u2014 return to charger`, ts });\nelse if (d.battery < 35) alerts.push({ level:'WARNING', icon:'\ud83d\udd0b', title:'Low Battery', detail:`Battery ${d.battery.toFixed(0)}% \u2014 schedule charging`, ts });\n\nif (d.predAlert) alerts.push({ level:'WARNING', icon:'\ud83d\udd2e', title:'Failure Predicted', detail:'Predictive Agent: motor failure risk rising', ts });\nif (d.state === 'error') alerts.push({ level:'CRITICAL', icon:'\ud83d\udea8', title:'System Error', detail:'Robot in error state', ts });\nif (d.isPatrolling) alerts.push({ level:'INFO', icon:'\ud83d\udd01', title:'Patrol Active', detail:'Executing patrol route', ts });\nif (d.isDocking) alerts.push({ level:'INFO', icon:'\ud83d\udd0c', title:'Docking', detail:'Navigating to charging station (Zone C)', ts });\n\n// Format for notification\nif (alerts.length > 0) {\n    const top = alerts[0];\n    msg.payload = `${top.icon} [${top.level}] ${top.title}: ${top.detail} @ ${ts}`;\n    msg.topic = top.level;\n    // Also send full list\n    const listHtml = alerts.map(a => `${a.icon} <b>${a.title}</b>: ${a.detail}`).join('<br>');\n    const listMsg = { payload: listHtml };\n    return [[msg], [listMsg]];\n}\nmsg.payload = '\u2705 All systems normal \u2014 no active alerts';\nconst listMsg = { payload: '\u2705 All systems normal' };\nreturn [[msg], [listMsg]];\n",
+    "outputs": 2,
+    "noerr": 0,
+    "x": 820,
+    "y": 300,
+    "wires": [
+      [
+        "debug_alerts",
+        "ui_alert_text"
+      ],
+      [
+        "ui_alert_list"
+      ]
+    ]
+  },
+  {
+    "id": "debug_alerts",
+    "type": "debug",
+    "z": "tab_dashboard",
+    "name": "Alerts Debug",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1060,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "ui_alert_text",
+    "type": "ui_notification",
+    "z": "tab_dashboard",
+    "name": "Alert Notification",
+    "group": "",
+    "order": 1,
+    "width": 0,
+    "height": 0,
+    "ui_control": {
+      "allowDismiss": true,
+      "sendDismissEvent": false,
+      "raw": false,
+      "position": "top right",
+      "displayTime": "3",
+      "showCountdown": false,
+      "outputs": 1,
+      "ok": "OK",
+      "cancel": "",
+      "raw2": false
+    },
+    "className": "",
+    "x": 1060,
+    "y": 300,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ui_alert_list",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_alerts",
+    "order": 1,
+    "width": 12,
+    "height": 3,
+    "name": "Active Alerts",
+    "label": "\ud83d\udea8 Active Alerts",
+    "format": "{{{msg.payload}}}",
+    "layout": "col-center",
+    "className": "",
+    "x": 1060,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "ctrl_start",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Start Robot",
+    "group": "ui_group_controls",
+    "order": 1,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u25b6 Start Robot",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#00d97e",
+    "className": "",
+    "icon": "",
+    "payload": "start",
+    "payloadType": "str",
+    "topic": "robot_cmd",
+    "topicType": "str",
+    "x": 120,
+    "y": 160,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "ctrl_stop",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Stop Robot",
+    "group": "ui_group_controls",
+    "order": 2,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u23f9 Stop Robot",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#2f3444",
+    "className": "",
+    "icon": "",
+    "payload": "stop",
+    "payloadType": "str",
+    "topic": "robot_cmd",
+    "topicType": "str",
+    "x": 120,
+    "y": 200,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "ctrl_estop",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Emergency Stop",
+    "group": "ui_group_controls",
+    "order": 3,
+    "width": 2,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83d\uded1 EMERGENCY STOP",
+    "tooltip": "Hard stops all motion immediately",
+    "color": "#ffffff",
+    "bgcolor": "#ff4545",
+    "className": "",
+    "icon": "",
+    "payload": "estop",
+    "payloadType": "str",
+    "topic": "robot_cmd",
+    "topicType": "str",
+    "x": 120,
+    "y": 240,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "ctrl_manual",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Manual Control",
+    "group": "ui_group_controls",
+    "order": 4,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83d\udd79\ufe0f Manual",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#4f8ef7",
+    "className": "",
+    "icon": "",
+    "payload": "manual",
+    "payloadType": "str",
+    "topic": "robot_cmd",
+    "topicType": "str",
+    "x": 120,
+    "y": 280,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "ctrl_reset",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Reset Robot",
+    "group": "ui_group_controls",
+    "order": 5,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83d\udd04 Reset",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#252934",
+    "className": "",
+    "icon": "",
+    "payload": "reset",
+    "payloadType": "str",
+    "topic": "robot_cmd",
+    "topicType": "str",
+    "x": 120,
+    "y": 320,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "robot_cmd_handler",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Robot Command Handler",
+    "func": "const cmd = msg.payload;\nconst s = context.global.get('robot_state') || {\n    vib:22, temp:36.2, battery:98, speed:100, speedLimit:100,\n    robotX:140, robotY:95, robotAngle:0,\n    robState:'running', payload:false, riskScore:0, predAlert:false,\n    vibHistory:[], tempHistory:[], pathHist:[],\n    isPatrolling:false, isDocking:false, isSpinning:false,\n    waypointSet:false, patrolIndex:0, zone:'A',\n    activeTemplates:[], manualDir:null, modes:['smart']\n};\n\nswitch(cmd) {\n    case 'start':\n        s.robState = 'running';\n        s.speed = Math.min(s.speedLimit, 100);\n        s.isDocking = false;\n        s.isPatrolling = false;\n        node.warn('\u25b6 Robot started');\n        break;\n    case 'stop':\n        s.robState = 'idle';\n        s.speed = 0;\n        s.manualDir = null;\n        s.isPatrolling = false;\n        s.isDocking = false;\n        node.warn('\u23f9 Robot stopped');\n        break;\n    case 'estop':\n        s.robState = 'error';\n        s.speed = 0;\n        s.manualDir = null;\n        s.isPatrolling = false;\n        s.isDocking = false;\n        node.error('\ud83d\uded1 EMERGENCY STOP triggered!');\n        break;\n    case 'manual':\n        s.robState = 'running';\n        node.warn('\ud83d\udd79\ufe0f Manual control activated');\n        break;\n    case 'reset':\n        s.robState = 'running';\n        s.speed = 100;\n        s.speedLimit = 100;\n        s.vib = 22;\n        s.temp = 36.2;\n        s.predAlert = false;\n        s.robotX = 140;\n        s.robotY = 95;\n        s.robotAngle = 0;\n        s.isPatrolling = false;\n        s.isDocking = false;\n        s.isSpinning = false;\n        s.waypointSet = false;\n        s.manualDir = null;\n        node.warn('\ud83d\udd04 Robot reset to defaults');\n        break;\n    case 'dock':\n        s.robState = 'running';\n        s.isDocking = true;\n        s.isPatrolling = false;\n        node.warn('\ud83d\udd0c Returning to dock (Zone C)');\n        break;\n    case 'patrol':\n        s.robState = 'running';\n        s.isPatrolling = !s.isPatrolling;\n        s.isDocking = false;\n        s.patrolIndex = 0;\n        node.warn(s.isPatrolling ? '\ud83d\udd01 Patrol route activated' : '\ud83d\udd01 Patrol cancelled');\n        break;\n    case 'spin':\n        if (!s.isSpinning) { s.isSpinning = true; s.spinTick = 0; }\n        node.warn('\ud83c\udf00 360\u00b0 scan initiated');\n        break;\n    case 'waypoint':\n        s.waypointX = Math.random()*260+20;\n        s.waypointY = Math.random()*160+20;\n        s.waypointSet = true;\n        s.isPatrolling = false;\n        s.isDocking = false;\n        node.warn(`\ud83d\udccd Waypoint set (${s.waypointX.toFixed(0)},${s.waypointY.toFixed(0)})`);\n        break;\n    // Direction keys\n    case 'fwd':    s.manualDir = 'forward';  break;\n    case 'bwd':    s.manualDir = 'backward'; break;\n    case 'left':   s.manualDir = 'left';     break;\n    case 'right':  s.manualDir = 'right';    break;\n    case 'stop_move': s.manualDir = null;    break;\n}\n\ncontext.global.set('robot_state', s);\nmsg.payload = { cmd, state: s.robState, speed: s.speed };\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 380,
+    "y": 240,
+    "wires": [
+      [
+        "debug_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "debug_cmd",
+    "type": "debug",
+    "z": "tab_dashboard",
+    "name": "Command Debug",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 600,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "btn_fwd",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Forward",
+    "group": "ui_group_motion",
+    "order": 2,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u25b2 Forward",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#1c1f28",
+    "className": "",
+    "icon": "",
+    "payload": "fwd",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 400,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_bwd",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Backward",
+    "group": "ui_group_motion",
+    "order": 8,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u25bc Backward",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#1c1f28",
+    "className": "",
+    "icon": "",
+    "payload": "bwd",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 440,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_left",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Left",
+    "group": "ui_group_motion",
+    "order": 4,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u25c4 Left",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#1c1f28",
+    "className": "",
+    "icon": "",
+    "payload": "left",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 480,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_right",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Right",
+    "group": "ui_group_motion",
+    "order": 6,
+    "width": 2,
+    "height": 1,
+    "passthru": false,
+    "label": "\u25ba Right",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#1c1f28",
+    "className": "",
+    "icon": "",
+    "payload": "right",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 520,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_dock",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Return to Dock",
+    "group": "ui_group_motion",
+    "order": 9,
+    "width": 3,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83d\udd0c Return to Dock",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#4f8ef7",
+    "className": "",
+    "icon": "",
+    "payload": "dock",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 560,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_patrol",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Patrol Route",
+    "group": "ui_group_motion",
+    "order": 10,
+    "width": 3,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83d\udd01 Patrol Route",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#9b6bff",
+    "className": "",
+    "icon": "",
+    "payload": "patrol",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 600,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_spin",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "360 Scan",
+    "group": "ui_group_motion",
+    "order": 11,
+    "width": 3,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83c\udf00 360\u00b0 Scan",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#ffb020",
+    "className": "",
+    "icon": "",
+    "payload": "spin",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 640,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "btn_waypoint",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Set Waypoint",
+    "group": "ui_group_motion",
+    "order": 12,
+    "width": 3,
+    "height": 1,
+    "passthru": false,
+    "label": "\ud83d\udccd Set Waypoint",
+    "tooltip": "",
+    "color": "",
+    "bgcolor": "#00d97e",
+    "className": "",
+    "icon": "",
+    "payload": "waypoint",
+    "payloadType": "str",
+    "topic": "motion",
+    "topicType": "str",
+    "x": 120,
+    "y": 680,
+    "wires": [
+      [
+        "robot_cmd_handler"
+      ]
+    ]
+  },
+  {
+    "id": "speed_slider",
+    "type": "ui_slider",
+    "z": "tab_dashboard",
+    "name": "Speed Limit",
+    "label": "\u26a1 Speed Limit (%)",
+    "tooltip": "",
+    "group": "ui_group_motion",
+    "order": 13,
+    "width": 6,
+    "height": 1,
+    "passthru": true,
+    "outs": "all",
+    "topic": "speed_limit",
+    "topicType": "str",
+    "min": "10",
+    "max": "100",
+    "step": "5",
+    "className": "",
+    "x": 120,
+    "y": 720,
+    "wires": [
+      [
+        "speed_handler"
+      ]
+    ]
+  },
+  {
+    "id": "speed_handler",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Set Speed Limit",
+    "func": "const s = context.global.get('robot_state') || {};\ns.speedLimit = parseInt(msg.payload);\ns.speed = Math.min(s.speed || 100, s.speedLimit);\ncontext.global.set('robot_state', s);\nmsg.payload = `Speed limit \u2192 ${s.speedLimit}%`;\nreturn msg;\n",
+    "outputs": 1,
+    "x": 360,
+    "y": 720,
+    "wires": [
+      [
+        "debug_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "tmpl_heat_btn",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Toggle Heat Guard",
+    "group": "ui_group_templates",
+    "order": 1,
+    "width": 4,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83c\udf21\ufe0f Prevent Overheating\n(Toggle)",
+    "tooltip": "Triggers when Temp > 55\u00b0C",
+    "color": "",
+    "bgcolor": "#073d1c",
+    "className": "",
+    "icon": "",
+    "payload": "heat",
+    "payloadType": "str",
+    "topic": "template_toggle",
+    "topicType": "str",
+    "x": 120,
+    "y": 820,
+    "wires": [
+      [
+        "template_handler"
+      ]
+    ]
+  },
+  {
+    "id": "tmpl_batt_btn",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Toggle Low Battery Return",
+    "group": "ui_group_templates",
+    "order": 2,
+    "width": 4,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83d\udd0b Low Battery Return\n(Toggle)",
+    "tooltip": "Triggers when Battery < 20%",
+    "color": "",
+    "bgcolor": "#0d1f3c",
+    "className": "",
+    "icon": "",
+    "payload": "batt",
+    "payloadType": "str",
+    "topic": "template_toggle",
+    "topicType": "str",
+    "x": 120,
+    "y": 860,
+    "wires": [
+      [
+        "template_handler"
+      ]
+    ]
+  },
+  {
+    "id": "tmpl_maint_btn",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Toggle Predictive Maint",
+    "group": "ui_group_templates",
+    "order": 3,
+    "width": 4,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83d\udd27 Predictive Maintenance\n(Toggle)",
+    "tooltip": "Triggers on rising vibration trend",
+    "color": "",
+    "bgcolor": "#3d2000",
+    "className": "",
+    "icon": "",
+    "payload": "maint",
+    "payloadType": "str",
+    "topic": "template_toggle",
+    "topicType": "str",
+    "x": 120,
+    "y": 900,
+    "wires": [
+      [
+        "template_handler"
+      ]
+    ]
+  },
+  {
+    "id": "tmpl_vib_btn",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Toggle Vib Shield",
+    "group": "ui_group_templates",
+    "order": 4,
+    "width": 4,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83d\udcf3 Avoid High Vibration\n(Toggle)",
+    "tooltip": "Triggers when Vibration > 70%",
+    "color": "",
+    "bgcolor": "#3d0a0a",
+    "className": "",
+    "icon": "",
+    "payload": "vib",
+    "payloadType": "str",
+    "topic": "template_toggle",
+    "topicType": "str",
+    "x": 120,
+    "y": 940,
+    "wires": [
+      [
+        "template_handler"
+      ]
+    ]
+  },
+  {
+    "id": "tmpl_nav_btn",
+    "type": "ui_button",
+    "z": "tab_dashboard",
+    "name": "Toggle Smart Nav",
+    "group": "ui_group_templates",
+    "order": 5,
+    "width": 4,
+    "height": 2,
+    "passthru": false,
+    "label": "\ud83e\udde0 Smart Navigation\n(Toggle)",
+    "tooltip": "AI obstacle avoidance",
+    "color": "",
+    "bgcolor": "#1a0e3d",
+    "className": "",
+    "icon": "",
+    "payload": "nav",
+    "payloadType": "str",
+    "topic": "template_toggle",
+    "topicType": "str",
+    "x": 120,
+    "y": 980,
+    "wires": [
+      [
+        "template_handler"
+      ]
+    ]
+  },
+  {
+    "id": "template_handler",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Template Toggle Handler",
+    "func": "const id = msg.payload;\nconst s = context.global.get('robot_state') || { activeTemplates: [] };\nif (!s.activeTemplates) s.activeTemplates = [];\n\nconst idx = s.activeTemplates.indexOf(id);\nlet status;\nif (idx >= 0) {\n    s.activeTemplates.splice(idx, 1);\n    status = `\u274c Template deactivated: ${id}`;\n} else {\n    s.activeTemplates.push(id);\n    status = `\u2705 Template activated: ${id}`;\n}\n\ncontext.global.set('robot_state', s);\nmsg.payload = status;\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 380,
+    "y": 900,
+    "wires": [
+      [
+        "ui_template_status",
+        "debug_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "ui_template_status",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_templates",
+    "order": 6,
+    "width": 12,
+    "height": 1,
+    "name": "Template Status",
+    "label": "\ud83d\udccb Template Status",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "x": 640,
+    "y": 900,
+    "wires": []
+  },
+  {
+    "id": "flow_engine",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Flow Rule Engine",
+    "func": "// Triggered by sensor tick \u2014 evaluates custom flow nodes\nconst s = context.global.get('robot_state') || {};\nconst vib = s.vib || 0;\nconst temp = s.temp || 0;\nconst logs = [];\n\n// Sensor \u2192 Condition \u2192 Action chain simulation\nif (vib > 40) {\n    logs.push({ type:'warn', msg:`\u2696 Condition: vib(${vib.toFixed(1)}) > 40 \u2192 TRUE` });\n    if (s.speed > 20) {\n        s.speed = Math.max(20, s.speed - 30);\n        context.global.set('robot_state', s);\n        logs.push({ type:'success', msg:`\ud83d\udc22 Reduce Speed \u2192 ${s.speed}%` });\n    }\n    logs.push({ type:'error', msg:`\ud83d\udea8 ALERT: High vibration detected!` });\n}\nif (temp > 50) {\n    logs.push({ type:'warn', msg:`\u2696 Condition: temp(${temp.toFixed(1)}) > 50 \u2192 TRUE` });\n    logs.push({ type:'error', msg:`\ud83d\udd25 ALERT: High temperature warning!` });\n}\n\nif (logs.length > 0) {\n    msg.payload = logs;\n    return msg;\n}\nmsg.payload = [{ type:'info', msg:`\ud83d\udcca Sensors nominal \u2014 vib:${vib.toFixed(1)}% temp:${temp.toFixed(1)}\u00b0C` }];\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 1040,
+    "wires": [
+      [
+        "flow_log_formatter"
+      ]
+    ]
+  },
+  {
+    "id": "flow_log_formatter",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Format Flow Log",
+    "func": "const logs = msg.payload;\nconst ts = new Date().toLocaleTimeString();\nconst html = logs.map(l => `<span style=\"color:${l.type==='error'?'#ff4545':l.type==='warn'?'#ffb020':l.type==='success'?'#00d97e':'#c2c8d8'}\">[${ts}] ${l.msg}</span>`).join('<br>');\nmsg.payload = html;\nreturn msg;\n",
+    "outputs": 1,
+    "x": 600,
+    "y": 1040,
+    "wires": [
+      [
+        "ui_flow_log"
+      ]
+    ]
+  },
+  {
+    "id": "ui_flow_log",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_flow",
+    "order": 1,
+    "width": 12,
+    "height": 4,
+    "name": "Flow Log",
+    "label": "\ud83d\udccb Flow Execution Log",
+    "format": "{{{msg.payload}}}",
+    "layout": "col-center",
+    "className": "",
+    "x": 820,
+    "y": 1040,
+    "wires": []
+  },
+  {
+    "id": "inject_flow_tick",
+    "type": "inject",
+    "z": "tab_dashboard",
+    "name": "Flow Engine Tick",
+    "repeat": "3",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "2",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 1040,
+    "wires": [
+      [
+        "flow_engine"
+      ]
+    ]
+  },
+  {
+    "id": "ai_input_ui",
+    "type": "ui_text_input",
+    "z": "tab_dashboard",
+    "name": "AI Query Input",
+    "label": "\ud83e\udd16 Ask AI Agent\u2026",
+    "tooltip": "Ask about robot health, anomalies, maintenance, or flow logic",
+    "group": "ui_group_ai",
+    "order": 1,
+    "width": 9,
+    "height": 1,
+    "passthru": true,
+    "mode": "text",
+    "delay": 300,
+    "topic": "ai_query",
+    "topicType": "str",
+    "sendOnBlur": true,
+    "className": "",
+    "x": 120,
+    "y": 1120,
+    "wires": [
+      [
+        "ai_engine"
+      ]
+    ]
+  },
+  {
+    "id": "ai_engine",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "AI Response Engine",
+    "func": "const q = (msg.payload || '').toLowerCase();\nif (!q || q.length < 2) return null;\n\nconst s = context.global.get('robot_state') || {\n    vib:22, temp:36.2, battery:98, speed:100, riskScore:0,\n    predAlert:false, zone:'A', activeTemplates:[], robState:'running'\n};\n\nconst v = s.vib || 0, t = s.temp || 0, b = s.battery || 98;\nconst risk = s.riskScore || 0, zone = s.zone || 'A';\nconst tpls = (s.activeTemplates || []).join(', ') || 'none';\n\nconst vibState = v>70?'critical':v>55?'elevated':v>35?'moderate':'normal';\nconst tempState = t>58?'critical':t>48?'elevated':'normal';\n\nlet response = '';\n\nif (/vibrat|anomaly|shak|fault|noise/.test(q)) {\n    if (vibState==='critical')\n        response = `\u26a0\ufe0f Critical vibration at ${v.toFixed(1)}% in Zone ${zone} \u2014 ${(v-40).toFixed(0)}% above threshold. Root cause: likely bearing wear or rotor imbalance. Risk: ${risk.toFixed(0)}%. Immediate speed reduction recommended.`;\n    else if (vibState==='elevated')\n        response = `Vibration elevated at ${v.toFixed(1)}% (Zone ${zone}). Consistent with early-stage mechanical looseness. Flow rule triggers at threshold 40%.`;\n    else\n        response = `Vibration normal at ${v.toFixed(1)}%. No anomaly detected in Zone ${zone}.`;\n\n} else if (/temp|heat|thermal/.test(q)) {\n    if (tempState==='critical')\n        response = `\ud83c\udf21\ufe0f Motor temp critically high at ${t.toFixed(1)}\u00b0C \u2014 above 58\u00b0C limit. Recommend halting and 15-minute cooling cycle.`;\n    else if (tempState==='elevated')\n        response = `Temperature elevated at ${t.toFixed(1)}\u00b0C. Active templates: ${tpls}.`;\n    else\n        response = `Temperature nominal at ${t.toFixed(1)}\u00b0C. No thermal concerns.`;\n\n} else if (/mainten|schedul|service|inspect/.test(q)) {\n    const urgency = risk>70?'IMMEDIATE':risk>40?'WITHIN 48H':'ROUTINE';\n    response = `Maintenance priority: ${urgency}. Vib ${v.toFixed(1)}%, temp ${t.toFixed(1)}\u00b0C, risk ${risk.toFixed(0)}%. Inspect: drive motor bearings, wheel fasteners, cooling fan.`;\n\n} else if (/forecast|predict|fail|risk/.test(q)) {\n    if (risk>70)\n        response = `\ud83d\udd2e HIGH RISK (${risk.toFixed(0)}%). Vibration in Zone ${zone} \u2014 bearing failure risk in 3\u20135 cycles. Activate Predictive Maintenance template.`;\n    else if (risk>35)\n        response = `\ud83d\udd2e MODERATE RISK (${risk.toFixed(0)}%). Proactive speed reduction recommended.`;\n    else\n        response = `\ud83d\udd2e LOW RISK (${risk.toFixed(0)}%). Est runtime: ~${Math.round(b/0.18/60)} min on current battery.`;\n\n} else if (/status|health|summary/.test(q)) {\n    const ov = risk>70?'CRITICAL':risk>40?'DEGRADED':'NOMINAL';\n    response = `Status: ${ov}. Zone: ${zone}. Vib: ${v.toFixed(1)}% (${vibState}), Temp: ${t.toFixed(1)}\u00b0C, Speed: ${s.speed}%, Battery: ${b.toFixed(0)}%, Risk: ${risk.toFixed(0)}%. Templates: ${tpls}.`;\n\n} else if (/battery|charge|power/.test(q)) {\n    const eta = b<20?'CRITICAL \u2014 dock now!':b<40?`~${Math.round((b-20)/0.18/60)} min to critical`:`~${Math.round(b/0.18/60)} min remaining`;\n    response = `Battery at ${b.toFixed(0)}%. ${eta}. Auto-return template: ${s.activeTemplates.includes('batt')?'ACTIVE':'not active'}.`;\n\n} else {\n    response = `Live data \u2014 vib: ${v.toFixed(1)}% (${vibState}), temp: ${t.toFixed(1)}\u00b0C, speed: ${s.speed}%, risk: ${risk.toFixed(0)}%, Zone ${zone}. Templates: ${tpls}. Try asking about \"anomaly\", \"temperature\", \"maintenance\", \"battery\", or \"forecast\".`;\n}\n\nmsg.payload = `\ud83e\udd16 AI Agent @ ${new Date().toLocaleTimeString()}:\\n${response}`;\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 1120,
+    "wires": [
+      [
+        "ui_ai_response"
+      ]
+    ]
+  },
+  {
+    "id": "ui_ai_response",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_ai",
+    "order": 2,
+    "width": 12,
+    "height": 4,
+    "name": "AI Response",
+    "label": "\ud83d\udcac AI Response",
+    "format": "{{msg.payload}}",
+    "layout": "col-center",
+    "className": "",
+    "x": 600,
+    "y": 1120,
+    "wires": []
+  },
+  {
+    "id": "inject_anomaly_test",
+    "type": "inject",
+    "z": "tab_dashboard",
+    "name": "Inject Fault (Test)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "topic": "",
+    "payload": "fault",
+    "payloadType": "str",
+    "x": 120,
+    "y": 1200,
+    "wires": [
+      [
+        "fault_injector"
+      ]
+    ]
+  },
+  {
+    "id": "fault_injector",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Fault Injector",
+    "func": "const s = context.global.get('robot_state') || {};\ns.vib = 88;\ncontext.global.set('robot_state', s);\nmsg.payload = '\ud83d\udd34 Fault injected \u2014 vibration set to 88%';\nnode.warn(msg.payload);\nreturn msg;\n",
+    "outputs": 1,
+    "x": 360,
+    "y": 1200,
+    "wires": [
+      [
+        "debug_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "inject_agent_status",
+    "type": "inject",
+    "z": "tab_dashboard",
+    "name": "Agent Status Tick",
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 120,
+    "y": 1280,
+    "wires": [
+      [
+        "agent_monitor"
+      ]
+    ]
+  },
+  {
+    "id": "agent_monitor",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "AI Agent Monitor",
+    "func": "const s = context.global.get('robot_state') || { vib:22, temp:36.2, riskScore:0, predAlert:false };\nconst agents = [\n    { name:'Sensor Sim',        state: 'active',   status: `Vib:${(s.vib||0).toFixed(0)} Temp:${(s.temp||0).toFixed(0)}` },\n    { name:'State Monitor',     state: 'active',   status: `Risk:${(s.riskScore||0).toFixed(0)}%` },\n    { name:'Anomaly Detector',  state: (s.vib>55||s.temp>50)?'warning':'idle',  status: (s.vib>55||s.temp>50)?'Detected':'Monitoring' },\n    { name:'Predictive Agent',  state: s.predAlert?'warning':'idle',             status: s.predAlert?'Failure predicted':'Standby' },\n    { name:'Decision Agent',    state: (s.vib>65)?'warning':'idle',              status: (s.vib>65)?'Executing':'Waiting' },\n    { name:'Flow Builder',      state: 'active',   status: 'Ready' }\n];\n\nconst html = agents.map(a => {\n    const color = a.state==='active'?'#00d97e':a.state==='warning'?'#ffb020':'#4a5168';\n    return `<span style=\"color:${color}\">\u2b24 ${a.name}</span> <span style=\"color:#7e8799\">${a.status}</span>`;\n}).join('<br>');\nmsg.payload = html;\nreturn msg;\n",
+    "outputs": 1,
+    "x": 360,
+    "y": 1280,
+    "wires": [
+      [
+        "ui_agent_status"
+      ]
+    ]
+  },
+  {
+    "id": "ui_agent_status",
+    "type": "ui_text",
+    "z": "tab_dashboard",
+    "group": "ui_group_ai",
+    "order": 3,
+    "width": 12,
+    "height": 3,
+    "name": "Agent Status",
+    "label": "\ud83e\udd16 AI Agents",
+    "format": "{{{msg.payload}}}",
+    "layout": "col-center",
+    "className": "",
+    "x": 600,
+    "y": 1280,
+    "wires": []
+  },
+  {
+    "id": "mqtt_out_sensors",
+    "type": "mqtt out",
+    "z": "tab_dashboard",
+    "name": "Publish Sensor Data",
+    "topic": "neuroflow/sensors",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker",
+    "x": 820,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "mqtt_publish_fork",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Prepare MQTT Payload",
+    "func": "const d = msg.payload;\nconst mqttMsg = {\n    payload: JSON.stringify({\n        vib: d.vib,\n        temp: d.temp,\n        battery: d.battery,\n        speed: d.speed,\n        zone: d.zone,\n        state: d.state,\n        riskScore: d.riskScore,\n        predAlert: d.predAlert,\n        ts: new Date().toISOString()\n    })\n};\nreturn mqttMsg;\n",
+    "outputs": 1,
+    "x": 600,
+    "y": 360,
+    "wires": [
+      [
+        "mqtt_out_sensors"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt_broker",
+    "type": "mqtt-broker",
+    "name": "Local MQTT Broker",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "neuroflow_hmi",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "birthTopic": "neuroflow/status",
+    "birthQos": "0",
+    "birthPayload": "online",
+    "birthMsg": {},
+    "closeTopic": "neuroflow/status",
+    "closeQos": "0",
+    "closePayload": "offline",
+    "closeMsg": {},
+    "willTopic": "neuroflow/status",
+    "willQos": "0",
+    "willPayload": "offline",
+    "willMsg": {},
+    "sessionExpiry": ""
+  },
+  {
+    "id": "sensor_to_mqtt",
+    "type": "function",
+    "z": "tab_dashboard",
+    "name": "Fork to MQTT",
+    "func": "return msg;",
+    "outputs": 1,
+    "x": 360,
+    "y": 360,
+    "wires": [
+      [
+        "mqtt_publish_fork"
+      ]
+    ]
+  },
+  {
+    "id": "comment_overview",
+    "type": "comment",
+    "z": "tab_dashboard",
+    "name": "NeuroFlow HMI \u2014 Node-RED Port",
+    "info": "## NeuroFlow HMI\n\nThis flow is a full port of the NeuroFlow HMI web application.\n\n### Architecture\n- **Sensor Tick**: Inject node fires every 1.5s \u2192 Sensor Simulator function\n- **Sensor Simulator**: Stateful function that simulates robot movement, sensor drift, battery drain, zone transitions\n- **Split Outputs**: Routes sensor data to gauges, chart, alert engine, and MQTT\n- **Robot Command Handler**: Processes button presses (start/stop/estop/manual/reset/dock/patrol/spin/waypoint)\n- **Template Handler**: Toggles automation templates (heat guard, battery return, predictive maintenance, vib shield, smart nav)\n- **Flow Rule Engine**: Evaluates sensor conditions and executes action chains every 3s\n- **AI Engine**: Responds to text queries about robot health, anomalies, maintenance, forecasts\n- **MQTT Publisher**: Publishes sensor data to `neuroflow/sensors` every tick\n- **Agent Monitor**: Updates AI agent status display every 5s\n\n### Requirements\n- node-red-dashboard (npm: node-red-dashboard)\n- MQTT broker on localhost:1883 (optional)\n\n### Installation\n1. Import this JSON into Node-RED (Menu \u2192 Import)\n2. Install node-red-dashboard if not present\n3. Deploy and open /ui\n",
+    "x": 200,
+    "y": 20,
+    "wires": []
+  }
+]

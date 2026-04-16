@@ -1,0 +1,18 @@
+node_modules/
+.node-red/
+*.log
+npm-debug.log*
+
+# Node-RED runtime files (generated, not source)
+.flows.json.backup
+flows_cred.json
+.config.runtime.json
+.config.nodes.json
+context/
+
+# Environment secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db

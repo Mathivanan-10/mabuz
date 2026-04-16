@@ -1,0 +1,18 @@
+# Dockerfile.railway — optimised for Railway.app deployment
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json ./
+RUN npm install --omit=dev --no-fund --no-audit
+
+# Create Node-RED data directory and copy flow files into it
+RUN mkdir -p /data
+COPY flows.json /data/flows.json
+COPY settings.railway.js /data/settings.js
+
+# Railway injects $PORT at runtime — expose it
+EXPOSE $PORT
+
+CMD ["node", "node_modules/.bin/node-red", "--userDir", "/data", "--port", "1880"]

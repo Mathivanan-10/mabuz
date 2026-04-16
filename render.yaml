@@ -1,0 +1,12 @@
+# render.yaml — Render.com deployment (alternative to Railway)
+services:
+  - type: web
+    name: neuroflow-hmi
+    runtime: docker
+    dockerfilePath: ./Dockerfile.railway
+    dockerContext: .
+    envVars:
+      - key: CREDENTIAL_SECRET
+        generateValue: true
+    healthCheckPath: /
+    autoDeploy: true
